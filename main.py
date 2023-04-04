@@ -4,7 +4,14 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.firefox.service import Service
+from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
+from selenium.webdriver.firefox.options import Options
+from selenium.webdriver.common.proxy import Proxy, ProxyType
+from selenium.webdriver.chrome.options import Options
 
+import undetected_chromedriver as uc
+
+from utils import browsers
 import time
 import os
 import requests
@@ -37,29 +44,78 @@ def read_json(file_path):
         return json.load(json_file)
 
 
+def create_folder_if_not_exists(folder_path):
+    if not os.path.exists(folder_path):
+        os.mkdir(folder_path)
+
+
 COLLECTION_FOLDER_PATH = "Collection"
 
 
-class ManageObject():
+class ChapterClass:
+    def __init__(self):
+        self.title = ""
+        self.author = ""
+        self.status = ""
+        self.chapters = [],
+        self.downloaded = []
+
+    def set(self, data_info):
+        try:
+            self.title = data_info["title"]
+        except:
+            pass
+        try:
+            self.author = ""
+        except:
+            pass
+        try:
+            self.status = ""
+        except:
+            pass
+        try:
+            self.chapters = []
+        except:
+            pass
+        try:
+            self.downloaded = []
+        except:
+            pass
+
+    def convert_to_json(self):
+        return json.dumps(self.__dict__)
+
+
+class MangaClass:
     def __init__(self, url):
         self.driver_path = 'C:\\geckodriver.exe'
         self.manga_url = url
 
     def start_driver(self):
         cprint("[*] Starting driver...", "green")
-        firefox_service = Service(self.driver_path)
-        options = webdriver.FirefoxOptions()
-        # options.add_argument('--headless')  # run in headless mode (no UI)
-        self.driver = webdriver.Firefox(
-            service=firefox_service, options=options)
+        # firefox_service = Service(self.driver_path)
+        # options = webdriver.FirefoxOptions()
+        # # options.add_argument('--headless')  # run in headless mode (no UI)
+        # self.driver = webdriver.Firefox(
+        #     service=firefox_service, options=options)
+
+        uc.install(executable_path='c:/chromedriver.exe', )
+        options = uc.ChromeOptions()
+        options.headless = False
+        self.driver = uc.Chrome(options=options)
+
+        version = self.driver.capabilities['chrome']['chromedriverVersion'].split(' ')[
+            0]
+        print(colored('Chromedriver version:', "green"),
+              colored(version, "yellow"))
 
         self.driver.get(url)
 
         wait = WebDriverWait(self.driver, 10)
-        # button = wait.until(EC.element_to_be_clickable((By.ID, 'read-action mrt10')))
-        wait.until(EC.presence_of_element_located((By.TAG_NAME, 'body')))
-        # Zoom out by 50%
-        self.driver.execute_script("document.body.style.zoom='30%'")
+        try:
+            wait.until(EC.presence_of_element_located((By.TAG_NAME, 'body')))
+        except:
+            print("Timed out waiting for page to load")
         input("Zoom?")
 
     def loading_data(self):
@@ -70,23 +126,30 @@ class ManageObject():
 
     def get_manga_info(self):
         cprint("[*] Getting manga information...", "green")
-        item_detail = self.driver.find_element(By.ID, "item-detail")
-        title = item_detail.find_element(By.CLASS_NAME, "title-detail").text
-        author = item_detail.find_element(
-            By.CLASS_NAME, format_class("author row")).text.split("\n")[1]
+
+        ITEM_CLASS = "item-detail"
+        TITLE_CLASS = format_class("title-detail")
+        AUTHOR_CLASS = format_class("author row")
+        STATUS_CLASS = format_class("status row")
+
+        item_detail = self.driver.find_element(By.ID, ITEM_CLASS)
+        title = item_detail.find_element(By.CLASS_NAME, TITLE_CLASS).text
+        author = [el.text for el in item_detail.find_elements(
+            By.CLASS_NAME, AUTHOR_CLASS) if "Tác giả" in el.text][0].split("\n")[1]
         status = item_detail.find_element(
-            By.CLASS_NAME, format_class("status row")).text.split("\n")[1]
+            By.CLASS_NAME, STATUS_CLASS).text.split("\n")[1]
         img_src = item_detail.find_element(
             By.TAG_NAME, "img").get_attribute("src")
+
         print(title, author, status, img_src)
 
         self.manga_folder_path = os.path.join(COLLECTION_FOLDER_PATH, title)
         self.manga_info_path = os.path.join(
             self.manga_folder_path, "info.json")
-        if not os.path.exists("Collection"):
-            os.mkdir("Collection")
-        if not os.path.exists(self.manga_folder_path):
-            os.mkdir(self.manga_folder_path)
+
+        create_folder_if_not_exists("Collection")
+        create_folder_if_not_exists(self.manga_folder_path)
+
         if self.loading_data():
             self.data_info["status"] = status
         else:
@@ -94,9 +157,12 @@ class ManageObject():
                 "title": title,
                 "author": author,
                 "status": status,
+                "chapters": [],
+                "downloaded": []
             }
             download_image(src=img_src, filename=os.path.join(
                 self.manga_folder_path, "cover.png"))
+
         write_json(self.manga_info_path, self.data_info)
 
     def start_read_from_beginning(self):
@@ -114,6 +180,27 @@ class ManageObject():
                 current_title = self.driver.title
                 break
             time.sleep(1)
+        if "just a moment" in current_title.lower():
+            input("Continue reading")
+
+    def get_all_list_chapters(self):
+        nt_listchapter = self.driver.find_element(By.ID, "nt_listchapter")
+        es_a = nt_listchapter.find_elements(By.TAG_NAME, "a")
+        self.list_chapters = []
+        for e_a in es_a:
+            self.list_chapters.append(e_a.get_attribute("href"))
+
+    def process_chapters(self):
+        chapter = ChapterClass()
+        chapter.set(self.data_info)
+        chapter.chapters = self.list_chapters
+        for i_chapter in self.list_chapters:
+            self.driver.get(i_chapter)
+            time.sleep(5)
+            self.get_all_images()
+            chapter.chapters.remove(i_chapter)
+            chapter.downloaded.append(i_chapter)
+            write_json(self.manga_info_path, chapter.convert_to_json())
 
     def get_all_images(self):
         cprint("[*] Getting all images...", "green")
@@ -129,26 +216,25 @@ class ManageObject():
         for idx, e_img in enumerate(es_images):
             src = "https:" + e_img.get_attribute('src')
             data_index = e_img.get_attribute('data-index')
-            filename = f"{self.get_current_chapter()}-page-{str(idx).zfill(4)}.jpg"
+            filename = f"{self.get_current_chapter()}-page-{str(idx).zfill(4)}.png"
             filename = os.path.join(current_chapter_folder_path, filename)
             temp_count = 0
             while True:
                 if not os.path.exists(filename):
                     break
-                filename = f"{self.get_current_chapter()}-page-{str(idx).zfill(4)}-{str(temp_count).zfill(3)}.jpg"
+                filename = f"{self.get_current_chapter()}-page-{str(idx).zfill(4)}-{str(temp_count).zfill(3)}.png"
                 filename = os.path.join(current_chapter_folder_path, filename)
                 temp_count += 1
 
-            img_base64 = e_img.screenshot_as_base64
-            img_data = base64.b64decode(img_base64)
-            with open(filename, 'wb') as f:
-                f.write(img_data)
-        if "downloaded_chapters" in self.data_info.keys():
-            self.data_info["downloaded_chapters"].append(
-                self.get_current_chapter())
+            # img_base64 = e_img.screenshot_as_base64
+            # img_data = base64.b64decode(img_base64)
+            # with open(filename, 'wb') as f:
+            #     f.write(img_data)
+            e_img.screenshot(filename)
+        if "downloaded" in self.data_info.keys():
+            self.data_info["downloaded"].append(self.driver.current_url)
         else:
-            self.data_info["downloaded_chapters"] = [
-                self.get_current_chapter()]
+            self.data_info["downloaded"] = [self.driver.current_url]
         write_json(self.manga_info_path, self.data_info)
 
     def next_chapter(self):
@@ -183,7 +269,7 @@ class ManageObject():
 
 
 url = sys.argv[1]
-manga = ManageObject(url)
+manga = MangaClass("url")
 manga.start_driver()
 manga.get_manga_info()
 manga.start_read_from_beginning()
@@ -192,4 +278,6 @@ while True:
     is_next = manga.next_chapter()
     if is_next == False:
         break
+# manga.get_all_list_chapters()
+# manga.process_chapters()
 manga.quit()
